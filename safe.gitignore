@@ -1,0 +1,15 @@
+# Python & Virtual Env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+
+# Node & Frontend Build
+node_modules/
+dist/
+.DS_Store
+
+# Temporary / Logs
+*.log
