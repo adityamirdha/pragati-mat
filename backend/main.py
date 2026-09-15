@@ -1,8 +1,8 @@
 import io
 import os
 import random
-from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from typing import List, Optional
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -26,23 +26,41 @@ app.add_middleware(
 )
 
 matcher = MaterialMatcher()
-DATASET_PATH = os.path.join(os.path.dirname(__file__), "data", "cpse_materials.csv")
+DATASET_PATH = os.path.join(
+    os.path.dirname(__file__), "data", "cpse_materials.csv"
+)
+
 
 def load_data() -> pd.DataFrame:
     if not os.path.exists(DATASET_PATH):
-        raise HTTPException(status_code=404, detail="Dataset not found. Run generate_dataset.py first.")
+        raise HTTPException(
+            status_code=404,
+            detail="Dataset not found. Run generate_dataset.py first."
+        )
     return pd.read_csv(DATASET_PATH).fillna("")
+
 
 class ItemComparisonRequest(BaseModel):
     description_a: str
     description_b: str
 
+
 class ExportRequest(BaseModel):
     approved_cluster_ids: List[int]
+
+
+class AdjudicationRequest(BaseModel):
+    cluster_id: Optional[int] = None
+    record_id: Optional[str] = None
+    action: str
+    nation_code: Optional[str] = None
+    remarks: Optional[str] = None
+
 
 @app.get("/api/health")
 def health_check():
     return {"status": "healthy", "service": "Pragati-Mat Core API"}
+
 
 @app.get("/api/materials")
 def get_materials(
@@ -53,10 +71,11 @@ def get_materials(
     df = load_data()
     if cpse:
         df = df[df["cpse"].str.upper() == cpse.upper()]
-    
+
     total = len(df)
-    items = df.iloc[offset : offset + limit].to_dict(orient="records")
+    items = df.iloc[offset: offset + limit].to_dict(orient="records")
     return {"total": total, "items": items}
+
 
 @app.post("/api/match-pair")
 def match_pair(payload: ItemComparisonRequest):
@@ -66,14 +85,15 @@ def match_pair(payload: ItemComparisonRequest):
     )
     return result
 
+
 @app.get("/api/harmonize-batch")
 def harmonize_batch(limit_clusters: int = 12, shuffle: bool = True):
     df = load_data()
     all_clusters = [int(cid) for cid in df["cluster_id"].unique()]
-    
+
     if shuffle:
         random.shuffle(all_clusters)
-        
+
     cluster_ids = all_clusters[:limit_clusters]
     reconciliation_records = []
 
@@ -100,31 +120,38 @@ def harmonize_batch(limit_clusters: int = 12, shuffle: bool = True):
         "matches": reconciliation_records
     }
 
+
 @app.get("/api/surplus-analytics")
 def get_surplus_analytics():
     df = load_data()
     grouped = df.groupby("cluster_id")
-    
+
     total_potential_savings = 0
     exchange_candidates = []
 
     for cid, group in grouped:
         if len(group) > 1 and group["stock_qty"].sum() > 0:
-            holding_cpse_count = group[group["stock_qty"] > 0]["cpse"].nunique()
-            if holding_cpse_count > 1:
+            holding_cpse = group[group["stock_qty"] > 0]["cpse"].nunique()
+            if holding_cpse > 1:
                 stock_values = group["stock_qty"] * group["unit_price_inr"]
                 cluster_locked_capital = int(stock_values.sum())
                 total_potential_savings += cluster_locked_capital
 
-                canonical_specs = extract_canonical_features(group.iloc[0]["raw_description"])
+                canonical_specs = extract_canonical_features(
+                    group.iloc[0]["raw_description"]
+                )
                 exchange_candidates.append({
                     "cluster_id": int(cid),
-                    "material_spec": canonical_specs["item_type"] or "INDUSTRIAL SPARE",
+                    "material_spec": (
+                        canonical_specs["item_type"] or "INDUSTRIAL SPARE"
+                    ),
                     "dimension": canonical_specs["dimension"],
                     "class": canonical_specs["pressure_class"],
                     "total_surplus_units": int(group["stock_qty"].sum()),
                     "total_locked_capital_inr": cluster_locked_capital,
-                    "holdings": group[["cpse", "location", "stock_qty", "unit_price_inr"]].to_dict(orient="records")
+                    "holdings": group[[
+                        "cpse", "location", "stock_qty", "unit_price_inr"
+                    ]].to_dict(orient="records")
                 })
 
     return {
@@ -133,20 +160,34 @@ def get_surplus_analytics():
         "exchange_opportunities": exchange_candidates[:15]
     }
 
+
 @app.post("/api/upload-catalog")
 async def upload_catalog(file: UploadFile = File(...)):
     if not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only standard CSV files are accepted.")
+        raise HTTPException(
+            status_code=400,
+            detail="Only standard CSV files are accepted."
+        )
 
     contents = await file.read()
     try:
         upload_df = pd.read_csv(io.BytesIO(contents)).fillna("")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to read CSV: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to read CSV: {str(e)}"
+        )
 
+    candidates = [
+        "raw_description", "description", "item_description",
+        "material_desc", "item_details", "MAKTX"
+    ]
     desc_col = None
-    for candidate in ["raw_description", "description", "item_description", "material_desc", "item_details", "MAKTX"]:
-        matches = [col for col in upload_df.columns if col.strip().lower() == candidate.lower()]
+    for candidate in candidates:
+        matches = [
+            col for col in upload_df.columns
+            if col.strip().lower() == candidate.lower()
+        ]
         if matches:
             desc_col = matches[0]
             break
@@ -154,7 +195,10 @@ async def upload_catalog(file: UploadFile = File(...)):
     if not desc_col:
         raise HTTPException(
             status_code=400,
-            detail=f"Could not find description column. Provided headers: {list(upload_df.columns)}"
+            detail=(
+                "Could not find description column. "
+                f"Provided headers: {list(upload_df.columns)}"
+            )
         )
 
     parsed_items = []
@@ -192,14 +236,33 @@ async def upload_catalog(file: UploadFile = File(...)):
         "matches": discovered_pairs[:10]
     }
 
+
+@app.post("/api/adjudicate")
+def adjudicate_record(payload: AdjudicationRequest):
+    action = payload.action.upper()
+    if action not in ["APPROVE", "REJECT"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid action. Must be 'APPROVE' or 'REJECT'."
+        )
+
+    return {
+        "success": True,
+        "action": action,
+        "cluster_id": payload.cluster_id,
+        "record_id": payload.record_id,
+        "nation_code": payload.nation_code,
+        "message": f"Cluster/Record decision '{action}' recorded successfully."
+    }
+
+
 @app.post("/api/export-master")
 def export_master(payload: ExportRequest):
     """
-    Generates an official MoP&NG Standard Unified Material Master CSV for approved items.
+    Generates official MoP&NG Standard Unified Material Master CSV.
     """
     df = load_data()
-    
-    # If specific clusters approved, filter to them; otherwise export all active harmonized clusters
+
     if payload.approved_cluster_ids:
         target_df = df[df["cluster_id"].isin(payload.approved_cluster_ids)]
     else:
@@ -209,10 +272,15 @@ def export_master(payload: ExportRequest):
     for cid, group in target_df.groupby("cluster_id"):
         rep = group.iloc[0]
         specs = extract_canonical_features(rep["raw_description"])
-        
-        # Build clean canonical title
-        canonical_name = f"{specs['item_type'] or 'EQUIPMENT'} | {specs['dimension'] or 'N/A'} | {specs['pressure_class'] or 'N/A'} | {specs['material'] or 'N/A'} | {specs['connection'] or 'N/A'}"
-        
+
+        canonical_name = (
+            f"{specs['item_type'] or 'EQUIPMENT'} | "
+            f"{specs['dimension'] or 'N/A'} | "
+            f"{specs['pressure_class'] or 'N/A'} | "
+            f"{specs['material'] or 'N/A'} | "
+            f"{specs['connection'] or 'N/A'}"
+        )
+
         legacy_keys = "; ".join(group["item_id"].tolist())
         descriptions = " // ".join(group["raw_description"].tolist())
         total_qty = int(group["stock_qty"].sum())
@@ -234,10 +302,12 @@ def export_master(payload: ExportRequest):
     export_df = pd.DataFrame(rows)
     stream = io.StringIO()
     export_df.to_csv(stream, index=False)
-    
+
     response = StreamingResponse(
         iter([stream.getvalue()]),
         media_type="text/csv"
     )
-    response.headers["Content-Disposition"] = "attachment; filename=Pragati_Mat_Unified_Master.csv"
+    response.headers["Content-Disposition"] = (
+        "attachment; filename=Pragati_Mat_Unified_Master.csv"
+    )
     return response

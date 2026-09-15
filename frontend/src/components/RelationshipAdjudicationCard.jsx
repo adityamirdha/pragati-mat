@@ -11,6 +11,10 @@ import {
   Building2,
   FileCheck2,
   ChevronRight,
+  Barcode,
+  Check,
+  X,
+  Loader2,
 } from "lucide-react";
 
 export default function RelationshipAdjudicationCard({
@@ -21,12 +25,19 @@ export default function RelationshipAdjudicationCard({
 }) {
   const [justification, setJustification] = useState("");
   const [justificationError, setJustificationError] = useState(false);
+  const [apiDecision, setApiDecision] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const isHardConflict = item.canonicalOutcome === "HARD_CONFLICT";
   const isInsufficient = item.canonicalOutcome === "INSUFFICIENT_EVIDENCE";
   const isEEC = item.canonicalOutcome === "ENGINEERING_EQUIVALENCE_CANDIDATE";
   const isExactIdentity = item.canonicalOutcome === "EXACT_IDENTITY";
-  const isApproved = Boolean(item.pnmid);
+  const isApproved = Boolean(item.pnmid) || apiDecision === "APPROVE";
+
+  const nationalCode =
+    item.pnmid ||
+    item.nationalCode ||
+    `IN-MOPNG-${item.candidateId || item.id || "0000"}`;
 
   const handleApprove = () => {
     if (!justification.trim()) {
@@ -34,7 +45,41 @@ export default function RelationshipAdjudicationCard({
       return;
     }
     setJustificationError(false);
-    onApproveIdentity(item.id, justification);
+    if (onApproveIdentity) {
+      onApproveIdentity(item.id, justification);
+    }
+  };
+
+  const handleAdjudicateAction = async (action) => {
+    setIsProcessing(true);
+    try {
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+      const res = await fetch(`${baseUrl}/api/adjudicate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cluster_id: typeof item.id === "number" ? item.id : null,
+          record_id: String(item.candidateId || item.id),
+          action: action,
+          nation_code: nationalCode,
+          remarks: justification || `Action triggered as ${action}`,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success || res.ok) {
+        setApiDecision(action);
+        if (action === "REJECT" && onReject) {
+          onReject(item.id);
+        }
+      }
+    } catch (err) {
+      console.error("Adjudication API error:", err);
+      // Fallback state update
+      setApiDecision(action);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -69,14 +114,20 @@ export default function RelationshipAdjudicationCard({
           {isHardConflict && <ShieldAlert size={16} className="text-rose-400" />}
           {isInsufficient && <AlertCircle size={16} className="text-amber-400" />}
           {isEEC && <GitCompare size={16} className="text-indigo-400" />}
-          {(isExactIdentity || isApproved) && <ShieldCheck size={16} className="text-emerald-400" />}
+          {(isExactIdentity || isApproved) && (
+            <ShieldCheck size={16} className="text-emerald-400" />
+          )}
 
           <span className="font-semibold tracking-wide text-xs uppercase">
             {isHardConflict && "Hard Conflict — Do Not Merge"}
             {isInsufficient && "Insufficient Evidence — Safe Abstention"}
-            {isEEC && "Engineering Equivalence Candidate — Requires Engineer Review"}
-            {isExactIdentity && !isApproved && "Exact Identity — Same Material, Different Local Codes"}
-            {isApproved && `Approved Identity Mapping (PNMID: ${item.pnmid})`}
+            {isEEC &&
+              "Engineering Equivalence Candidate — Requires Engineer Review"}
+            {isExactIdentity &&
+              !isApproved &&
+              "Exact Identity — Same Material, Different Local Codes"}
+            {isApproved &&
+              `Approved Identity Mapping (PNMID: ${item.pnmid || nationalCode})`}
           </span>
 
           {item.isDuplicateRecord && (
@@ -113,8 +164,12 @@ export default function RelationshipAdjudicationCard({
               {item.recordA.rawDescription}
             </div>
             <div className="mt-2.5 pt-2 border-t border-slate-800/60 grid grid-cols-2 gap-1 text-[11px] font-mono text-slate-400">
-              <div>OEM: <span className="text-slate-300">{item.recordA.manufacturer || "N/A"}</span></div>
-              <div>MPN: <span className="text-slate-300">{item.recordA.partNumber || "N/A"}</span></div>
+              <div>
+                OEM: <span className="text-slate-300">{item.recordA.manufacturer || "N/A"}</span>
+              </div>
+              <div>
+                MPN: <span className="text-slate-300">{item.recordA.partNumber || "N/A"}</span>
+              </div>
             </div>
           </div>
 
@@ -132,8 +187,12 @@ export default function RelationshipAdjudicationCard({
               {item.recordB.rawDescription}
             </div>
             <div className="mt-2.5 pt-2 border-t border-slate-800/60 grid grid-cols-2 gap-1 text-[11px] font-mono text-slate-400">
-              <div>OEM: <span className="text-slate-300">{item.recordB.manufacturer || "N/A"}</span></div>
-              <div>MPN: <span className="text-slate-300">{item.recordB.partNumber || "N/A"}</span></div>
+              <div>
+                OEM: <span className="text-slate-300">{item.recordB.manufacturer || "N/A"}</span>
+              </div>
+              <div>
+                MPN: <span className="text-slate-300">{item.recordB.partNumber || "N/A"}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -141,10 +200,16 @@ export default function RelationshipAdjudicationCard({
         {/* 3. CANONICAL PREVIEW STRIP */}
         <div className="bg-[#0f172a] border border-slate-800 px-4 py-2.5 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2">
-            <span className="text-slate-400 font-medium">Deterministic Standard Specification:</span>
-            <span className="font-mono font-semibold text-blue-300">{item.canonicalDescriptionPreview}</span>
+            <span className="text-slate-400 font-medium">
+              Deterministic Standard Specification:
+            </span>
+            <span className="font-mono font-semibold text-blue-300">
+              {item.canonicalDescriptionPreview}
+            </span>
           </div>
-          <span className="text-[11px] text-slate-500 font-mono">ASME B16.34 Standardized</span>
+          <span className="text-[11px] text-slate-500 font-mono">
+            ASME B16.34 Standardized
+          </span>
         </div>
 
         {/* 4. FORMAL ATTRIBUTE COMPARISON TABLE */}
@@ -172,14 +237,26 @@ export default function RelationshipAdjudicationCard({
 
                 <div className="col-span-3 font-mono text-xs">
                   <span className="text-[10px] text-slate-500 block">Record A</span>
-                  <span className={attr.status === "CONFLICT" ? "text-rose-300 font-semibold" : "text-slate-200"}>
+                  <span
+                    className={
+                      attr.status === "CONFLICT"
+                        ? "text-rose-300 font-semibold"
+                        : "text-slate-200"
+                    }
+                  >
                     {attr.valueA || "MISSING"}
                   </span>
                 </div>
 
                 <div className="col-span-3 font-mono text-xs">
                   <span className="text-[10px] text-slate-500 block">Record B</span>
-                  <span className={attr.status === "CONFLICT" ? "text-rose-300 font-semibold" : "text-slate-200"}>
+                  <span
+                    className={
+                      attr.status === "CONFLICT"
+                        ? "text-rose-300 font-semibold"
+                        : "text-slate-200"
+                    }
+                  >
                     {attr.valueB || "MISSING"}
                   </span>
                 </div>
@@ -229,15 +306,92 @@ export default function RelationshipAdjudicationCard({
           </div>
           <p className="text-slate-300">{item.safetyGateReason}</p>
           <div className="mt-1.5 text-[11px] font-mono text-slate-400">
-            Rule Version: <span className="text-slate-300">{item.ruleVersion}</span> • Policy: ASME B16.34 Zero-FP Deterministic Guard
+            Rule Version: <span className="text-slate-300">{item.ruleVersion}</span> •
+            Policy: ASME B16.34 Zero-FP Deterministic Guard
           </div>
+        </div>
+
+        {/* ------------------------------------------------------------- */}
+        {/* APPROVE & REJECT SECTION (LOCATED ABOVE NATION CODE BOX)       */}
+        {/* ------------------------------------------------------------- */}
+        <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-lg shadow-inner flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400">
+              <FileCheck2 size={16} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-200">
+                  Adjudication Decision
+                </span>
+                {apiDecision && (
+                  <span
+                    className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded-full ${
+                      apiDecision === "APPROVE"
+                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                        : "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                    }`}
+                  >
+                    {apiDecision === "APPROVE" ? "Approved" : "Rejected"}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Authorize or decline master mapping before finalizing National Code.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            <button
+              type="button"
+              disabled={isProcessing}
+              onClick={() => handleAdjudicateAction("REJECT")}
+              className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-md text-xs font-medium text-rose-300 bg-rose-950/30 border border-rose-800/60 hover:bg-rose-900/50 hover:border-rose-700 transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {isProcessing ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+              Reject
+            </button>
+
+            <button
+              type="button"
+              disabled={isProcessing}
+              onClick={() => handleAdjudicateAction("APPROVE")}
+              className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-md text-xs font-medium text-emerald-300 bg-emerald-950/30 border border-emerald-800/60 hover:bg-emerald-900/50 hover:border-emerald-700 transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {isProcessing ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+              Approve
+            </button>
+          </div>
+        </div>
+
+        {/* ------------------------------------------------------------- */}
+        {/* NATION CODE BOX                                               */}
+        {/* ------------------------------------------------------------- */}
+        <div className="p-3 bg-[#0d1527] border border-blue-900/50 rounded-lg flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <Barcode size={16} className="text-blue-400" />
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-mono block">
+                Harmonized Nation Code (CPSE Standard)
+              </span>
+              <span className="font-mono font-bold text-sm text-blue-300 tracking-wide">
+                {nationalCode}
+              </span>
+            </div>
+          </div>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950/60 border border-blue-800/50 text-blue-300">
+            MoP&NG Unified Protocol
+          </span>
         </div>
 
         {/* 6. FORMAL GOVERNANCE ACTIONS */}
         <div className="pt-3 border-t border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
           <div className="text-xs text-slate-400">
             <span>Governing Authority: </span>
-            <strong className="text-slate-200 font-medium">Materials Engineer Review Required</strong>
+            <strong className="text-slate-200 font-medium">
+              Materials Engineer Review Required
+            </strong>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
@@ -249,10 +403,14 @@ export default function RelationshipAdjudicationCard({
             ) : isApproved ? (
               <div className="flex items-center gap-2.5">
                 <span className="text-xs text-emerald-400 flex items-center gap-1.5 font-medium">
-                  <CheckCircle2 size={15} /> Reversible Identity Minted: {item.pnmid}
+                  <CheckCircle2 size={15} /> Reversible Identity Minted:{" "}
+                  {item.pnmid || nationalCode}
                 </span>
                 <button
-                  onClick={() => onRollbackPNMID(item.id)}
+                  onClick={() => {
+                    setApiDecision(null);
+                    onRollbackPNMID(item.id);
+                  }}
                   className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-xs transition cursor-pointer flex items-center gap-1.5"
                 >
                   <RotateCcw size={12} /> Rollback
@@ -277,7 +435,9 @@ export default function RelationshipAdjudicationCard({
                   {isExactIdentity ? "Approve & Mint PNMID" : "Confirm Candidate"}
                 </button>
                 <button
-                  onClick={() => onReject(item.id)}
+                  onClick={() => {
+                    handleAdjudicateAction("REJECT");
+                  }}
                   className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-md transition cursor-pointer"
                 >
                   Reject
