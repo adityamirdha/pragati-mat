@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 
 const CASE_DATA = {
   "CASE-A": {
@@ -194,6 +194,10 @@ export default function ReconcileQueue() {
   const [generatedNationalCode, setGeneratedNationalCode] = useState(null);
   const [copied, setCopied] = useState(false);
 
+  // Adjudication Decision State
+  const [decisionStatus, setDecisionStatus] = useState(null);
+  const [isDeciding, setIsDeciding] = useState(false);
+
   // Switch Case
   const handleCaseChange = (caseKey) => {
     setSelectedCase(caseKey);
@@ -201,6 +205,7 @@ export default function ReconcileQueue() {
     setEditableData({ ...CASE_DATA[caseKey].cpsePresets[0] });
     setAdjudicationResult(null);
     setGeneratedNationalCode(null);
+    setDecisionStatus(null);
     setCopied(false);
   };
 
@@ -210,6 +215,7 @@ export default function ReconcileQueue() {
     setEditableData({ ...activeCaseConfig.cpsePresets[idx] });
     setAdjudicationResult(null);
     setGeneratedNationalCode(null);
+    setDecisionStatus(null);
     setCopied(false);
   };
 
@@ -217,12 +223,14 @@ export default function ReconcileQueue() {
     setEditableData((prev) => ({ ...prev, [field]: value }));
     setAdjudicationResult(null);
     setGeneratedNationalCode(null);
+    setDecisionStatus(null);
   };
 
   const handleRunAdjudication = () => {
     setIsProcessing(true);
     setAdjudicationResult(null);
     setGeneratedNationalCode(null);
+    setDecisionStatus(null);
     setCopied(false);
 
     setTimeout(() => {
@@ -254,6 +262,29 @@ export default function ReconcileQueue() {
       navigator.clipboard.writeText(generatedNationalCode);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleDecision = async (action) => {
+    setIsDeciding(true);
+    try {
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+      await fetch(`${baseUrl}/api/adjudicate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          record_id: editableData.localCode,
+          action: action,
+          nation_code: generatedNationalCode || editableData.codePrefix || "IN-MAT-PENDING",
+          remarks: `Decision submitted for ${editableData.localCode}`
+        })
+      });
+      setDecisionStatus(action);
+    } catch (err) {
+      console.error("Adjudicate failed:", err);
+      setDecisionStatus(action);
+    } finally {
+      setIsDeciding(false);
     }
   };
 
@@ -446,7 +477,6 @@ export default function ReconcileQueue() {
                   <div className="w-full md:w-auto flex items-center justify-between md:justify-end gap-3 pt-2 md:pt-0 border-t md:border-t-0 border-slate-200">
                     <span className="text-[11px] text-slate-500 italic hidden lg:inline">{item.remark}</span>
                     
-                    {/* Distinct Status Badges for all 4 cases */}
                     {item.status === "MATCH" && (
                       <span className="px-2.5 py-1 rounded bg-emerald-50 text-emerald-700 font-bold text-xs border border-emerald-200 whitespace-nowrap">
                         MATCHED ✓
@@ -481,6 +511,52 @@ export default function ReconcileQueue() {
             <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs">
               <span className="font-bold text-slate-900">{adjudicationResult.verdictTitle}: </span>
               <span className="text-slate-600">{adjudicationResult.verdictDesc}</span>
+            </div>
+          </div>
+
+          {/* ========================================================= */}
+          {/* ADJUDICATION DECISION PANEL (ABOVE NATION CODE SECTION)   */}
+          {/* ========================================================= */}
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-bold text-slate-900">
+                  Adjudication Decision
+                </h4>
+                {decisionStatus && (
+                  <span
+                    className={`px-2 py-0.5 text-xs font-bold rounded-full ${
+                      decisionStatus === "APPROVE"
+                        ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                        : "bg-rose-100 text-rose-800 border border-rose-300"
+                    }`}
+                  >
+                    {decisionStatus}D
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Review verified attributes and finalize master harmonization status.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2.5 w-full sm:w-auto">
+              <button
+                type="button"
+                disabled={isDeciding}
+                onClick={() => handleDecision("REJECT")}
+                className="flex-1 sm:flex-none px-4 py-2 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded-lg hover:bg-rose-100 transition disabled:opacity-50 cursor-pointer"
+              >
+                {isDeciding ? "Processing..." : "Reject Entry"}
+              </button>
+              <button
+                type="button"
+                disabled={isDeciding}
+                onClick={() => handleDecision("APPROVE")}
+                className="flex-1 sm:flex-none px-4 py-2 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-300 rounded-lg hover:bg-emerald-100 transition disabled:opacity-50 cursor-pointer"
+              >
+                {isDeciding ? "Processing..." : "Approve Entry"}
+              </button>
             </div>
           </div>
 
